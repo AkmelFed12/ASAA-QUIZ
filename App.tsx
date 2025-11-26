@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getCurrentUser, logoutUser, getGlobalState } from './services/storageService';
+import { getCurrentUser, logoutUser, getGlobalState, initDB } from './services/storageService';
 import { User, AppView } from './types';
 import { Layout } from './components/Layout';
 import { Auth } from './components/Auth';
@@ -7,7 +7,7 @@ import { Quiz } from './components/Quiz';
 import { Leaderboard } from './components/Leaderboard';
 import { Admin } from './components/Admin';
 import { Profile } from './components/Profile';
-import { Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, CheckCircle2, Loader2 } from 'lucide-react';
 
 const HADITHS = [
   "Le meilleur d'entre vous est celui qui apprend le Coran et l'enseigne.",
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [view, setView] = useState<AppView>(AppView.AUTH);
   const [hadith, setHadith] = useState("");
+  const [isDbReady, setIsDbReady] = useState(false);
   
   // Quiz availability state
   const [isQuizAvailable, setIsQuizAvailable] = useState(false);
@@ -33,59 +34,74 @@ const App: React.FC = () => {
 
   // Initial Load
   useEffect(() => {
-    const loadedUser = getCurrentUser();
-    if (loadedUser) {
-      setUser(loadedUser);
-      setView(AppView.HOME);
-    }
-    // Set random Hadith
-    setHadith(HADITHS[Math.floor(Math.random() * HADITHS.length)]);
+    const initialize = async () => {
+        try {
+            await initDB();
+            setIsDbReady(true);
+            const loadedUser = getCurrentUser();
+            if (loadedUser) {
+              setUser(loadedUser);
+              setView(AppView.HOME);
+            }
+            // Set random Hadith
+            setHadith(HADITHS[Math.floor(Math.random() * HADITHS.length)]);
+        } catch (e) {
+            console.error("Failed to init app", e);
+        }
+    };
+    initialize();
   }, []);
 
   // Check Quiz Availability Logic
   useEffect(() => {
-    const checkAvailability = () => {
-      const globalState = getGlobalState();
-      
-      // 1. Admin Override Check
-      if (globalState.isManualOverride) {
-        setIsQuizAvailable(globalState.isQuizOpen);
-        setAvailabilityMessage(globalState.isQuizOpen ? "Le quiz est ouvert manuellement." : "Le quiz est fermé par l'administrateur.");
-        return;
+    const checkAvailability = async () => {
+      if (!isDbReady) return;
+
+      try {
+          const globalState = await getGlobalState();
+          
+          // 1. Admin Override Check
+          if (globalState.isManualOverride) {
+            setIsQuizAvailable(globalState.isQuizOpen);
+            setAvailabilityMessage(globalState.isQuizOpen ? "Le quiz est ouvert manuellement." : "Le quiz est fermé par l'administrateur.");
+            return;
+          }
+
+          // 2. Time Check (20h - 00h)
+          const now = new Date();
+          const hours = now.getHours();
+
+          // For testing purposes, you might want to broaden this range or rely on Admin Override
+          const isOpenTime = hours >= 20 && hours <= 23; 
+          // 00h is practically next day start, so 23:59 is end.
+
+          if (!isOpenTime) {
+            setIsQuizAvailable(false);
+            setAvailabilityMessage("Le quiz est ouvert uniquement entre 20H00 et 00H00.");
+            return;
+          }
+
+          // 3. One Attempt Per Day Check
+          if (user && user.lastPlayedDate) {
+            const today = new Date().toISOString().split('T')[0];
+            if (user.lastPlayedDate === today) {
+              setIsQuizAvailable(false);
+              setAvailabilityMessage("Vous avez déjà participé aujourd'hui. Revenez demain insha'Allah.");
+              return;
+            }
+          }
+
+          setIsQuizAvailable(true);
+          setAvailabilityMessage("Le quiz est ouvert ! Bismillah.");
+      } catch (e) {
+          console.error("Error checking availability", e);
       }
-
-      // 2. Time Check (20h - 00h)
-      const now = new Date();
-      const hours = now.getHours();
-
-      // For testing purposes, you might want to broaden this range or rely on Admin Override
-      const isOpenTime = hours >= 20 && hours <= 23; 
-      // 00h is practically next day start, so 23:59 is end.
-
-      if (!isOpenTime) {
-        setIsQuizAvailable(false);
-        setAvailabilityMessage("Le quiz est ouvert uniquement entre 20H00 et 00H00.");
-        return;
-      }
-
-      // 3. One Attempt Per Day Check
-      if (user && user.lastPlayedDate) {
-        const today = new Date().toISOString().split('T')[0];
-        if (user.lastPlayedDate === today) {
-          setIsQuizAvailable(false);
-          setAvailabilityMessage("Vous avez déjà participé aujourd'hui. Revenez demain insha'Allah.");
-          return;
-        }
-      }
-
-      setIsQuizAvailable(true);
-      setAvailabilityMessage("Le quiz est ouvert ! Bismillah.");
     };
 
     checkAvailability();
     const interval = setInterval(checkAvailability, 60000); // Check every minute
     return () => clearInterval(interval);
-  }, [user, view]); // Re-check when user or view changes
+  }, [user, view, isDbReady]); // Re-check when user or view changes
 
   const handleLogin = (loggedInUser: User) => {
     setUser(loggedInUser);
@@ -97,6 +113,15 @@ const App: React.FC = () => {
     setUser(null);
     setView(AppView.AUTH);
   };
+
+  if (!isDbReady) {
+      return (
+          <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
+              <Loader2 className="w-12 h-12 text-emerald-600 animate-spin mb-4" />
+              <p className="text-gray-600 font-medium">Connexion à la base de données...</p>
+          </div>
+      );
+  }
 
   // Render View Content
   const renderContent = () => {
@@ -151,7 +176,7 @@ const App: React.FC = () => {
                     onClick={() => setView(AppView.QUIZ)}
                     className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 px-10 rounded-full transition transform hover:scale-105 shadow-lg flex items-center justify-center gap-2 mx-auto"
                   >
-                    <span>Commencer le Quiz</span>
+                    <span>Commencer le Quiz (Niveau Avancé)</span>
                     <CheckCircle2 size={20} />
                   </button>
                 ) : (
@@ -165,7 +190,7 @@ const App: React.FC = () => {
               </div>
               <div className="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between text-sm text-gray-500">
                 <span>1 participation / jour</span>
-                <span>Questions aléatoires</span>
+                <span>Questions IA Illimitées</span>
               </div>
             </div>
 

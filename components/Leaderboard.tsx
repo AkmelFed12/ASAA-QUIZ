@@ -1,9 +1,22 @@
-import React, { useMemo } from 'react';
+
+import React, { useMemo, useEffect, useState } from 'react';
 import { getResults } from '../services/storageService';
-import { Trophy, Calendar } from 'lucide-react';
+import { Trophy, Calendar, Loader2, Mail } from 'lucide-react';
+import { QuizResult } from '../types';
 
 export const Leaderboard: React.FC = () => {
-  const results = getResults();
+  const [results, setResults] = useState<QuizResult[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchResults = async () => {
+      setIsLoading(true);
+      const data = await getResults();
+      setResults(data);
+      setIsLoading(false);
+    };
+    fetchResults();
+  }, []);
 
   // Aggregate stats per user
   const stats = useMemo(() => {
@@ -25,14 +38,45 @@ export const Leaderboard: React.FC = () => {
       .sort((a, b) => b.totalScore - a.totalScore); // Sort by total score
   }, [results]);
 
+  const sendLeaderboardByEmail = () => {
+      const subject = `Classement Général ASAA`;
+      let body = `As-salamu alaykum,\n\nVoici le classement actuel des participants :\n\n`;
+      
+      stats.forEach((s, idx) => {
+          body += `#${idx + 1} - ${s.username} : ${s.totalScore} pts (${s.gamesPlayed} quiz)\n`;
+      });
+      
+      body += `\nTotal participants : ${stats.length}\nDate : ${new Date().toLocaleString()}`;
+
+      window.location.href = `mailto:ouattaral2@student.iugb.edu.ci?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20">
+        <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mb-4" />
+        <p className="text-gray-500">Chargement du classement...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="text-center mb-8">
+      <div className="text-center mb-8 relative">
         <h2 className="text-3xl font-serif font-bold text-gray-800 flex items-center justify-center gap-3">
           <Trophy className="text-amber-400" size={32} />
           Classement Général
         </h2>
         <p className="text-gray-500 mt-2">Les meilleurs participants de l'association</p>
+        
+        {stats.length > 0 && (
+            <button 
+                onClick={sendLeaderboardByEmail}
+                className="mt-4 md:absolute md:right-0 md:top-0 md:mt-0 flex items-center gap-2 text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-full hover:bg-blue-200 transition"
+            >
+                <Mail size={14} /> Envoyer par mail
+            </button>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">

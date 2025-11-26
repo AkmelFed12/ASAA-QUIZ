@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { getUsers, saveUser } from '../services/storageService';
-import { Lock } from 'lucide-react';
+import { Lock, Loader2 } from 'lucide-react';
 
 interface AuthProps {
   onLogin: (user: User) => void;
@@ -12,6 +12,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [isAdminAttempt, setIsAdminAttempt] = useState(false);
 
   useEffect(() => {
@@ -23,70 +24,81 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     }
   }, [username]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
 
-    const trimmedUsername = username.trim();
+    try {
+      const trimmedUsername = username.trim();
 
-    if (!trimmedUsername) {
-      setError("Le nom d'utilisateur est requis.");
-      return;
-    }
-
-    // Admin Authentication
-    if (isAdminAttempt) {
-      if (password !== 'ASAA2023') {
-        setError("Code d'accès administrateur incorrect.");
+      if (!trimmedUsername) {
+        setError("Le nom d'utilisateur est requis.");
+        setIsLoading(false);
         return;
       }
-      
-      // Admin Login Success
-      const adminUser: User = {
-        username: 'Admin',
-        role: 'ADMIN',
-        lastPlayedDate: null
-      };
-      
-      // Ensure admin exists in storage (though not strictly necessary for logic, good for consistency)
-      saveUser(adminUser);
-      onLogin(adminUser);
-      return;
-    }
 
-    // Standard User Logic
-    const users = getUsers();
-    const existingUser = users.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
-
-    if (isLogin) {
-      if (existingUser) {
-        // Prevent users from logging in as Admin without password via this path (handled above, but double check)
-        if (existingUser.role === 'ADMIN') {
-             setError("Veuillez utiliser le code d'accès administrateur.");
-             return;
+      // Admin Authentication
+      if (isAdminAttempt) {
+        if (password !== 'ASAA2023') {
+          setError("Code d'accès administrateur incorrect.");
+          setIsLoading(false);
+          return;
         }
-        onLogin(existingUser);
-      } else {
-        setError("Utilisateur non trouvé. Veuillez vous inscrire.");
-      }
-    } else {
-      if (existingUser) {
-        setError("Ce nom d'utilisateur existe déjà.");
-      } else {
-        // Prevent registration of "admin" name if somehow bypassed check above
-        if (trimmedUsername.toLowerCase() === 'admin') {
-           setError("Ce nom d'utilisateur est réservé.");
-           return;
-        }
-
-        const newUser: User = {
-          username: trimmedUsername,
-          role: 'USER',
+        
+        // Admin Login Success
+        const adminUser: User = {
+          username: 'Admin',
+          role: 'ADMIN',
           lastPlayedDate: null
         };
-        saveUser(newUser);
-        onLogin(newUser);
+        
+        await saveUser(adminUser);
+        onLogin(adminUser);
+        return;
       }
+
+      // Standard User Logic - Now Async from DB
+      const users = await getUsers();
+      const existingUser = users.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
+
+      if (isLogin) {
+        if (existingUser) {
+          // Prevent users from logging in as Admin without password via this path
+          if (existingUser.role === 'ADMIN') {
+              setError("Veuillez utiliser le code d'accès administrateur.");
+              setIsLoading(false);
+              return;
+          }
+          onLogin(existingUser);
+        } else {
+          setError("Utilisateur non trouvé. Veuillez vous inscrire.");
+        }
+      } else {
+        if (existingUser) {
+          setError("Ce nom d'utilisateur existe déjà.");
+        } else {
+          // Prevent registration of "admin" name
+          if (trimmedUsername.toLowerCase() === 'admin') {
+            setError("Ce nom d'utilisateur est réservé.");
+            setIsLoading(false);
+            return;
+          }
+
+          const newUser: User = {
+            username: trimmedUsername,
+            role: 'USER',
+            lastPlayedDate: null
+          };
+          await saveUser(newUser);
+          onLogin(newUser);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Une erreur est survenue lors de la connexion à la base de données. Veuillez réessayer.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -124,6 +136,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
               placeholder="Entrez votre nom"
+              disabled={isLoading}
             />
           </div>
 
@@ -136,6 +149,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition"
                   placeholder="Code ASAA2023"
+                  disabled={isLoading}
                 />
              </div>
           )}
@@ -148,8 +162,10 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
           <button
             type="submit"
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition transform hover:scale-[1.02] shadow-md"
+            disabled={isLoading}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition transform hover:scale-[1.02] shadow-md flex items-center justify-center gap-2"
           >
+            {isLoading && <Loader2 className="animate-spin" size={18} />}
             {isAdminAttempt ? 'Entrer' : (isLogin ? 'Se connecter' : "S'inscrire")}
           </button>
         </form>
@@ -159,6 +175,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             <button
               onClick={() => { setIsLogin(!isLogin); setError(''); }}
               className="text-sm text-emerald-600 hover:text-emerald-800 font-medium hover:underline"
+              disabled={isLoading}
             >
               {isLogin ? "Pas encore de compte ? S'inscrire" : 'Déjà un compte ? Se connecter'}
             </button>
